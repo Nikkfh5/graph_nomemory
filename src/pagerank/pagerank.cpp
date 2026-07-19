@@ -436,6 +436,70 @@ private:
     std::size_t batch_records_;
 };
 
+void write_candidate_with_telemetry(
+    detail::DestinationTraversal& traversal,
+    const std::span<const std::uint32_t> out_degree,
+    const std::span<const double> transformed_current,
+    const double base,
+    const double alpha,
+    const std::span<double> candidate,
+    detail::PageRankTraversalTelemetry* const telemetry
+) {
+    if (telemetry == nullptr) {
+        traversal.write_candidate(
+            out_degree, transformed_current, base, alpha, candidate
+        );
+        return;
+    }
+
+    // Measure destination traversal only; exclude transform and normalization.
+    const detail::TelemetryTimePoint started = detail::TelemetryClock::now();
+    traversal.write_candidate(
+        out_degree, transformed_current, base, alpha, candidate
+    );
+    const detail::TelemetryTimePoint finished = detail::TelemetryClock::now();
+    const std::uint64_t elapsed =
+        detail::elapsed_nanoseconds(started, finished);
+    if (telemetry->candidate_destination_traversal_count == 0U) {
+        telemetry->first_candidate_destination_traversal_ns = elapsed;
+    }
+    detail::add_telemetry_value(
+        telemetry->candidate_destination_traversal_ns, elapsed
+    );
+    detail::increment_telemetry_count(
+        telemetry->candidate_destination_traversal_count
+    );
+}
+
+[[nodiscard]] std::optional<double> compute_true_residual_with_telemetry(
+    detail::DestinationTraversal& traversal,
+    const std::span<const std::uint32_t> out_degree,
+    const std::span<const double> candidate,
+    const std::span<double> reusable_workspace,
+    const PageRankConfig& config,
+    detail::PageRankTraversalTelemetry* const telemetry
+) {
+    if (telemetry == nullptr) {
+        return traversal.compute_true_residual(
+            out_degree, candidate, reusable_workspace, config
+        );
+    }
+
+    const detail::TelemetryTimePoint started = detail::TelemetryClock::now();
+    std::optional<double> residual = traversal.compute_true_residual(
+        out_degree, candidate, reusable_workspace, config
+    );
+    const detail::TelemetryTimePoint finished = detail::TelemetryClock::now();
+    detail::add_telemetry_value(
+        telemetry->true_residual_destination_traversal_ns,
+        detail::elapsed_nanoseconds(started, finished)
+    );
+    detail::increment_telemetry_count(
+        telemetry->true_residual_destination_traversal_count
+    );
+    return residual;
+}
+
 }  // namespace
 
 PageRankResult::PageRankResult(
@@ -568,6 +632,7 @@ PageRankResult detail::run_page_rank_with_traversal(
     std::uint64_t iteration = 1U;
     while (true) {
         report.iterations_attempted = iteration;
+
         const std::span<double> current_view(current.get(), vertex_count);
         const detail::TransformResult transform =
             detail::transform_current_in_place(current_view, degrees);
@@ -585,39 +650,15 @@ PageRankResult detail::run_page_rank_with_traversal(
         }
 
         const std::span<double> candidate(scratch.get(), vertex_count);
-        if (telemetry == nullptr) {
-            traversal.write_candidate(
-                degrees,
-                current_view,
-                base,
-                config.alpha,
-                candidate
-            );
-        } else {
-            const detail::TelemetryTimePoint started =
-                detail::TelemetryClock::now();
-            traversal.write_candidate(
-                degrees,
-                current_view,
-                base,
-                config.alpha,
-                candidate
-            );
-            const detail::TelemetryTimePoint finished =
-                detail::TelemetryClock::now();
-            const std::uint64_t elapsed =
-                detail::elapsed_nanoseconds(started, finished);
-            if (telemetry->candidate_destination_traversal_count == 0U) {
-                telemetry->first_candidate_destination_traversal_ns = elapsed;
-            }
-            detail::add_telemetry_value(
-                telemetry->candidate_destination_traversal_ns,
-                elapsed
-            );
-            detail::increment_telemetry_count(
-                telemetry->candidate_destination_traversal_count
-            );
-        }
+        write_candidate_with_telemetry(
+            traversal,
+            degrees,
+            current_view,
+            base,
+            config.alpha,
+            candidate,
+            telemetry
+        );
 
         const detail::CandidateMetrics metrics =
             detail::normalize_and_measure_candidate(
@@ -639,31 +680,20 @@ PageRankResult detail::run_page_rank_with_traversal(
         report.true_residual_l1.reset();
         report.theoretical_residual_error_estimate_l1.reset();
 
+        // Delta only gates the independent full-graph residual check required before acceptance.
         if (detail::delta_prefilter_passes(
                 metrics.delta_l1, config.alpha, config.eta
             )) {
             ++report.residual_checks;
-            std::optional<double> residual;
-            if (telemetry == nullptr) {
-                residual = traversal.compute_true_residual(
-                    degrees, candidate, current_view, config
+            const std::optional<double> residual =
+                compute_true_residual_with_telemetry(
+                    traversal,
+                    degrees,
+                    candidate,
+                    current_view,
+                    config,
+                    telemetry
                 );
-            } else {
-                const detail::TelemetryTimePoint started =
-                    detail::TelemetryClock::now();
-                residual = traversal.compute_true_residual(
-                    degrees, candidate, current_view, config
-                );
-                const detail::TelemetryTimePoint finished =
-                    detail::TelemetryClock::now();
-                detail::add_telemetry_value(
-                    telemetry->true_residual_destination_traversal_ns,
-                    detail::elapsed_nanoseconds(started, finished)
-                );
-                detail::increment_telemetry_count(
-                    telemetry->true_residual_destination_traversal_count
-                );
-            }
             if (!residual.has_value()) {
                 return numerical_failure(
                     PageRankNumericalFailure::invalid_residual
@@ -684,6 +714,7 @@ PageRankResult detail::run_page_rank_with_traversal(
             });
         }
 
+        // Return verified scratch; otherwise rotate the two resident buffers.
         if (report.true_residual_l1.has_value()
             && detail::residual_condition_passes(
                 *report.true_residual_l1,

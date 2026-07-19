@@ -431,8 +431,7 @@ private:
     );
 #else
     PthreadAttributes attributes;
-    // pthread_getattr_np initializes its output object itself. Destroy the
-    // object initialized by PthreadAttributes before replacing it.
+    // pthread_getattr_np initializes its output; destroy the wrapper-owned value first.
     attributes.destroy_checked();
 
     pthread_attr_t effective_attributes{};
@@ -550,8 +549,7 @@ public:
     ~Impl() noexcept {
         request_stop_noexcept();
         if (join_workers_noexcept() != 0) {
-            // Continuing destruction could free state still reachable by a
-            // worker. There is no safe recovery path from pthread_join here.
+            // Failed join leaves worker access live; destruction cannot continue safely.
             std::terminate();
         }
     }
@@ -616,53 +614,10 @@ public:
             throw std::overflow_error("executor wave generation overflow");
         }
 
-        for (FailureRecord& failure : failures_) {
-            failure.job_index = std::numeric_limits<std::size_t>::max();
-            failure.error = nullptr;
-        }
-        for (WorkerArgument& argument : arguments_) {
-            argument.successful_jobs = 0U;
-            argument.successful_jobs_overflow = false;
-            argument.cpu_before_valid = false;
-            argument.cpu_after_valid = false;
-        }
-
-        job_count_ = job_count;
-        context_ = context;
-        callback_ = callback;
-        next_job_.store(0U, std::memory_order_relaxed);
-        failure_cutoff_.store(job_count, std::memory_order_release);
-        completed_workers_ = 0U;
-        wave_active_ = true;
-
-        const bool capture_concurrency =
-            clock_preflight_valid_ && !telemetry_defect_sticky_;
-        std::uint64_t wall_before_ns = 0U;
-        bool wall_before_valid = false;
-        FixedExecutorConcurrencyFailure capture_failure =
-            FixedExecutorConcurrencyFailure::none;
-        if (capture_concurrency) {
-            const FixedExecutorConcurrencyFailure wall_failure =
-                capture_wall_clock(wall_before_ns);
-            wall_before_valid =
-                wall_failure == FixedExecutorConcurrencyFailure::none;
-            capture_failure = higher_priority_failure(
-                capture_failure, wall_failure
-            );
-            if (
-                wall_failure == FixedExecutorConcurrencyFailure::none
-                && evidence_.wave_count > 0U
-                && wall_before_ns < last_wall_after_ns_
-            ) {
-                capture_failure = higher_priority_failure(
-                    capture_failure,
-                    FixedExecutorConcurrencyFailure::clock_regression
-                );
-            }
-            capture_failure = higher_priority_failure(
-                capture_failure, capture_worker_clocks(true)
-            );
-        }
+        // Build wave state under mutex_; increment generation_ before waking workers.
+        prepare_wave_locked(job_count, context, callback);
+        WaveConcurrencyCapture concurrency =
+            begin_concurrency_capture_locked();
         ++generation_;
 
         work_condition_.notify_all();
@@ -682,52 +637,17 @@ public:
             std::rethrow_exception(error);
         }
 
-        std::uint64_t wall_after_ns = 0U;
-        bool wall_after_valid = false;
-        if (capture_concurrency) {
-            capture_failure = higher_priority_failure(
-                capture_failure, capture_worker_clocks(false)
-            );
-            const FixedExecutorConcurrencyFailure wall_failure =
-                capture_wall_clock(wall_after_ns);
-            wall_after_valid =
-                wall_failure == FixedExecutorConcurrencyFailure::none;
-            capture_failure = higher_priority_failure(
-                capture_failure, wall_failure
-            );
-        }
-
-        std::size_t selected_index =
-            std::numeric_limits<std::size_t>::max();
-        std::exception_ptr selected_error;
-        for (const FailureRecord& failure : failures_) {
-            if (failure.error && failure.job_index < selected_index) {
-                selected_index = failure.job_index;
-                selected_error = failure.error;
-            }
-        }
+        finish_concurrency_capture_locked(concurrency);
+        const std::exception_ptr selected_error =
+            select_lowest_index_failure_locked();
 
         wave_active_ = false;
         if (!selected_error) {
-            if (capture_concurrency) {
-                capture_failure = commit_concurrency_wave(
-                    job_count,
-                    wall_before_ns,
-                    wall_after_ns,
-                    wall_before_valid,
-                    wall_after_valid,
-                    capture_failure
-                );
-                if (
-                    capture_failure
-                    != FixedExecutorConcurrencyFailure::none
-                ) {
-                    record_concurrency_failure(capture_failure);
-                }
-            }
+            commit_concurrency_capture_locked(job_count, concurrency);
             return;
         }
 
+        // Poison and join before propagating failure; workers may still reference executor state.
         stop_requested_ = true;
         healthy_.store(false, std::memory_order_release);
         lock.unlock();
@@ -755,6 +675,129 @@ private:
         std::size_t job_index{std::numeric_limits<std::size_t>::max()};
         std::exception_ptr error;
     };
+
+    struct WaveConcurrencyCapture final {
+        bool enabled{false};
+        bool wall_before_valid{false};
+        bool wall_after_valid{false};
+        std::uint64_t wall_before_ns{0U};
+        std::uint64_t wall_after_ns{0U};
+        FixedExecutorConcurrencyFailure failure{
+            FixedExecutorConcurrencyFailure::none
+        };
+    };
+
+    // *_locked requires coordinator-held mutex and no executing wave.
+    void prepare_wave_locked(
+        const std::size_t job_count,
+        void* const context,
+        const ErasedIndexedJob callback
+    ) {
+        for (FailureRecord& failure : failures_) {
+            failure.job_index = std::numeric_limits<std::size_t>::max();
+            failure.error = nullptr;
+        }
+        for (WorkerArgument& argument : arguments_) {
+            argument.successful_jobs = 0U;
+            argument.successful_jobs_overflow = false;
+            argument.cpu_before_valid = false;
+            argument.cpu_after_valid = false;
+        }
+
+        job_count_ = job_count;
+        context_ = context;
+        callback_ = callback;
+        next_job_.store(0U, std::memory_order_relaxed);
+        failure_cutoff_.store(job_count, std::memory_order_release);
+        completed_workers_ = 0U;
+        wave_active_ = true;
+    }
+
+    [[nodiscard]] WaveConcurrencyCapture
+    begin_concurrency_capture_locked() {
+        WaveConcurrencyCapture capture{
+            .enabled = clock_preflight_valid_ && !telemetry_defect_sticky_,
+        };
+        if (!capture.enabled) {
+            return capture;
+        }
+
+        const FixedExecutorConcurrencyFailure wall_failure =
+            capture_wall_clock(capture.wall_before_ns);
+        capture.wall_before_valid =
+            wall_failure == FixedExecutorConcurrencyFailure::none;
+        capture.failure = higher_priority_failure(
+            capture.failure, wall_failure
+        );
+        if (
+            wall_failure == FixedExecutorConcurrencyFailure::none
+            && evidence_.wave_count > 0U
+            && capture.wall_before_ns < last_wall_after_ns_
+        ) {
+            capture.failure = higher_priority_failure(
+                capture.failure,
+                FixedExecutorConcurrencyFailure::clock_regression
+            );
+        }
+        capture.failure = higher_priority_failure(
+            capture.failure, capture_worker_clocks(true)
+        );
+        return capture;
+    }
+
+    void finish_concurrency_capture_locked(
+        WaveConcurrencyCapture& capture
+    ) {
+        if (!capture.enabled) {
+            return;
+        }
+
+        capture.failure = higher_priority_failure(
+            capture.failure, capture_worker_clocks(false)
+        );
+        const FixedExecutorConcurrencyFailure wall_failure =
+            capture_wall_clock(capture.wall_after_ns);
+        capture.wall_after_valid =
+            wall_failure == FixedExecutorConcurrencyFailure::none;
+        capture.failure = higher_priority_failure(
+            capture.failure, wall_failure
+        );
+    }
+
+    void commit_concurrency_capture_locked(
+        const std::size_t job_count,
+        WaveConcurrencyCapture& capture
+    ) noexcept {
+        if (!capture.enabled) {
+            return;
+        }
+
+        capture.failure = commit_concurrency_wave(
+            job_count,
+            capture.wall_before_ns,
+            capture.wall_after_ns,
+            capture.wall_before_valid,
+            capture.wall_after_valid,
+            capture.failure
+        );
+        if (capture.failure != FixedExecutorConcurrencyFailure::none) {
+            record_concurrency_failure(capture.failure);
+        }
+    }
+
+    [[nodiscard]] std::exception_ptr
+    select_lowest_index_failure_locked() const noexcept {
+        std::size_t selected_index =
+            std::numeric_limits<std::size_t>::max();
+        std::exception_ptr selected_error;
+        for (const FailureRecord& failure : failures_) {
+            if (failure.error && failure.job_index < selected_index) {
+                selected_index = failure.job_index;
+                selected_error = failure.error;
+            }
+        }
+        return selected_error;
+    }
 
     void record_concurrency_failure(
         const FixedExecutorConcurrencyFailure failure
@@ -1194,9 +1237,7 @@ private:
     }
 
     void validate_control_capacities() const {
-        // fixed_executor_control_bytes accounts exactly one element of each
-        // owned O(T) array. Refuse a standard-library growth policy that
-        // would reserve a larger hidden payload than the preflight formula.
+        // Enforce exact O(T) capacities assumed by fixed_executor_control_bytes.
         const std::size_t expected = config_.worker_count;
         if (
             stack_mappings_.capacity() != expected
