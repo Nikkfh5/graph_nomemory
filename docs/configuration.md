@@ -102,6 +102,38 @@ output. Invalid config возвращает ненулевой exit и не ме
 | `parallel.worker_source_batch_records` | `8192` |
 | `parallel.scheduler_window_records` | `64` |
 
+#### Как устроен reference parallel profile
+
+Config v1 не определяет число CPU автоматически. `parallel.worker_count=64` зафиксирован как часть воспроизводимого профиля, проверенного на Linux x86-64 стенде с 64 доступными логическими процессорами. На машине с меньшим числом доступных CPU значение в tracked `config/main.conf` следует явно уменьшить до результата `nproc`; масштабирование выше 64 workers не исследовалось. Явное число workers делает запуск повторяемым и позволяет до вычисления точно проверить память, вместо того чтобы молча менять resource profile в зависимости от host. Эти defaults — проверенные bounded resource knobs, а не автоматически найденный или универсально оптимальный набор.
+
+Остальные task и parallel values задают ограниченную геометрию выполнения, а не коэффициенты алгоритма PageRank:
+
+- `preprocess.max_task_edges=262144` и `preprocess.max_task_vertices=4096` ограничивают обычную disk task одновременно по числу рёбер и вершин, чтобы одна задача не захватывала неограниченный диапазон;
+- `worker_stack_bytes=1048576` и `worker_guard_bytes=4096` задают явно учитываемые stack mapping и guard page каждого worker; значения проверяются относительно `PTHREAD_STACK_MIN` и фактического размера страницы host;
+- два `worker_*_batch_records=8192` ограничивают per-worker чтение `incoming_counts` и `incoming_sources`; при четырёхбайтовой записи это два буфера по `32768` bytes на worker;
+- `scheduler_window_records=64` ограничивает число task records и partial sums, одновременно находящихся у coordinator; фактический параллелизм не превышает минимум из `worker_count`, scheduler window и числа готовых задач, поэтому увеличение только `worker_count` выше `64` не расширяет default wave;
+- `preprocess.edge_slice_size=8192` ограничивает одну задачу для большой входящей adjacency: степень `50000` превращается в семь slices `6 × 8192 + 848`, которые можно исполнять параллельно без буфера на весь гиперузел.
+
+Для `T=worker_count` и `W=scheduler_window_records` parallel peak считается по явной bounded формуле:
+
+```text
+M_parallel =
+  T * (worker_stack + worker_guard + 4 * count_batch + 4 * source_batch)
+  + executor_control(T)
+  + W * (32-byte task record + 8-byte partial sum)
+
+required =
+  20 * V
+  + max(single-thread I/O peak, M_parallel)
+  + observed RLIMIT_STACK
+  + 32 MiB runtime reserve
+  <= 128 MiB
+```
+
+Здесь `V` — число вершин, а `executor_control(T)` — отдельно рассчитанные служебные структуры persistent pool. Все умножения и сложения выполняются с overflow checks.
+
+Checked memory plan для resource keys вычисляется до `O(V)` allocation и чтения рёбер. Сам pool создаётся лениво после allocation состояния вершин; до первой parallel wave каждый worker проверяет фактические stack и guard mappings Linux. Несовпадение с планом останавливает запуск до выполнения parallel edge tasks.
+
 Main-thread stack не является user claim: executable читает фактический finite
 soft `RLIMIT_STACK` и включает его в memory preflight. Unlimited stack
 отклоняется. Для sequential режима нужно одновременно задать
