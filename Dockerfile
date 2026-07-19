@@ -44,4 +44,4 @@ LABEL org.opencontainers.image.title="Graph NoMemory" \
 COPY --from=build /opt/graph_nomemory/ /usr/local/
 
 WORKDIR /data
-CMD ["tbank", "--help"]
+CMD ["main", "--help"]

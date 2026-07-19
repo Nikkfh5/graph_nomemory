@@ -13,7 +13,7 @@ non_converged_output=$scratch/non-converged.csv
 printf 'from,to\n1,2\n2,3\n3,1\n4,1\n' > "$input"
 
 "$binary" --help > "$scratch/help.txt"
-expected_help='Usage: tbank INPUT.csv OUTPUT.csv [CONFIG]
+expected_help='Usage: main INPUT.csv OUTPUT.csv [CONFIG]
 
 Configuration: https://github.com/Nikkfh5/graph_nomemory/blob/main/docs/configuration.md'
 test "$(cat "$scratch/help.txt")" = "$expected_help"

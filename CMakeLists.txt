@@ -236,12 +236,12 @@ target_link_libraries(
 )
 
 add_executable(
-    tbank
+    main
     src/main.cpp
 )
-target_compile_features(tbank PRIVATE cxx_std_20)
+target_compile_features(main PRIVATE cxx_std_20)
 target_link_libraries(
-    tbank
+    main
     PRIVATE
         tbank_cli_support
         tbank_pagerank
@@ -255,17 +255,17 @@ target_link_libraries(
 include(CTest)
 if(BUILD_TESTING)
     add_test(
-        NAME tbank_contract_smoke
+        NAME main_contract_smoke
         COMMAND
             /bin/sh
             ${CMAKE_CURRENT_SOURCE_DIR}/tests/contract_smoke.sh
-            $<TARGET_FILE:tbank>
+            $<TARGET_FILE:main>
     )
 endif()
 
 include(GNUInstallDirs)
 install(
     TARGETS
-        tbank
+        main
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )

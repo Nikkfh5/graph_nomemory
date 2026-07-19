@@ -42,7 +42,7 @@ using tbank::preprocess::CountedGraphPreprocessResult;
 using tbank::preprocess::CountedGraphPreprocessor;
 
 constexpr std::string_view kHelp =
-    "Usage: tbank INPUT.csv OUTPUT.csv [CONFIG]\n"
+    "Usage: main INPUT.csv OUTPUT.csv [CONFIG]\n"
     "\n"
     "Configuration: "
     "https://github.com/Nikkfh5/graph_nomemory/blob/main/"
@@ -79,14 +79,14 @@ void report_error(
     const std::string_view message
 ) noexcept {
     try {
-        std::string line = "tbank: ";
+        std::string line = "main: ";
         line.append(kind);
         line.append(": ");
         line.append(message);
         line.push_back('\n');
         tbank::cli::write_stderr(line);
     } catch (...) {
-        tbank::cli::write_stderr("tbank: error reporting failed\n");
+        tbank::cli::write_stderr("main: error reporting failed\n");
     }
 }
 
@@ -144,7 +144,7 @@ struct Invocation {
     if (limit.rlim_cur == RLIM_INFINITY) {
         throw StackLimitError(
             "soft RLIMIT_STACK is unlimited; install a finite limit before "
-            "running tbank"
+            "running main"
         );
     }
     if (limit.rlim_cur == 0U) {
@@ -189,7 +189,7 @@ void require_absent_output(const std::filesystem::path& output) {
     } while (result == -1 && errno == EINTR);
     if (result == 0) {
         throw OutputExistsError(
-            "output path already exists; tbank never replaces output"
+            "output path already exists; main never replaces output"
         );
     }
     if (errno != ENOENT) {
@@ -345,7 +345,7 @@ public:
         mutable_pattern.push_back('\0');
         char* const created = ::mkdtemp(mutable_pattern.data());
         if (created == nullptr) {
-            throw_posix_error(errno, "create private tbank run directory");
+            throw_posix_error(errno, "create private main run directory");
         }
         return UniqueRunDirectory(std::filesystem::path(created));
     }
@@ -372,7 +372,7 @@ public:
         std::error_code error;
         static_cast<void>(std::filesystem::remove_all(path_, error));
         if (error) {
-            throw std::system_error(error, "remove private tbank run directory");
+            throw std::system_error(error, "remove private main run directory");
         }
         active_ = false;
     }
