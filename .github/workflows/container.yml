@@ -10,7 +10,7 @@ on:
       - CMakeLists.txt
       - include/**
       - src/**
-      - tests/**
+      - config/**
   workflow_dispatch:
 
 permissions:

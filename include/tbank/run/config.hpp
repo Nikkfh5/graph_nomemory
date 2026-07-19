@@ -35,34 +35,31 @@ struct RunConfig {
     }
 };
 
-// Returns the accepted resource profile. The main-stack inventory is observed
-// by the executable and deliberately cannot be overridden by a config file.
+// main_stack_bytes is observed by the executable, not configurable.
 [[nodiscard]] RunConfig default_run_config(
     std::uint64_t observed_main_stack_bytes
 );
 
-// Applies the strict v1 key=value document to default_run_config(). Parsing and
-// complete static validation finish before the caller can create any workspace
-// or output artifact.
+// Parses strict v1 key=value input before workspace or output creation.
 [[nodiscard]] RunConfig parse_run_config(
     std::string_view bytes,
     std::uint64_t observed_main_stack_bytes
 );
 
-// Opens one non-symlink regular file without blocking, reads its stable
-// contents into a bounded heap buffer, then delegates to the same strict
-// parser. The path is configuration input only; paths used by the graph
-// pipeline are never part of RunConfig.
+// Reads one stable, bounded, non-symlink regular file; config never supplies pipeline paths.
 [[nodiscard]] RunConfig load_run_config(
     const std::filesystem::path& path,
     std::uint64_t observed_main_stack_bytes
 );
 
-// Validates a resolved typed configuration. csv_byte_limit is derived from the
-// input file at runtime, so the static preprocessing check uses the shortest
-// valid CSV length without mutating the supplied object. main_stack_bytes is a
-// host observation; its actual memory admission remains a separate resource
-// check in the executable.
+// ENOENT selects defaults; every other failure is reported.
+[[nodiscard]] RunConfig load_run_config_or_default(
+    const std::filesystem::path& path,
+    std::uint64_t observed_main_stack_bytes
+);
+
+// Static validation uses the shortest valid CSV; runtime admits actual input size and observed
+// main stack separately.
 void validate_run_config(const RunConfig& config);
 
 }  // namespace tbank::run

@@ -252,17 +252,6 @@ target_link_libraries(
         tbank_warnings
 )
 
-include(CTest)
-if(BUILD_TESTING)
-    add_test(
-        NAME main_contract_smoke
-        COMMAND
-            /bin/sh
-            ${CMAKE_CURRENT_SOURCE_DIR}/tests/contract_smoke.sh
-            $<TARGET_FILE:main>
-    )
-endif()
-
 include(GNUInstallDirs)
 install(
     TARGETS

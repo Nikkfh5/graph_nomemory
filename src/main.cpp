@@ -19,7 +19,6 @@
 #include <filesystem>
 #include <limits>
 #include <new>
-#include <optional>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -42,11 +41,14 @@ using tbank::preprocess::CountedGraphPreprocessResult;
 using tbank::preprocess::CountedGraphPreprocessor;
 
 constexpr std::string_view kHelp =
-    "Usage: main INPUT.csv OUTPUT.csv [CONFIG]\n"
+    "Usage: main INPUT.csv OUTPUT.csv\n"
     "\n"
-    "Configuration: "
+    "Configuration: ./config/main.conf (optional; defaults if absent)\n"
+    "Documentation: "
     "https://github.com/Nikkfh5/graph_nomemory/blob/main/"
     "docs/configuration.md\n";
+
+constexpr std::string_view kDefaultConfigPath = "config/main.conf";
 
 class OutputExistsError final : public std::runtime_error {
 public:
@@ -93,21 +95,17 @@ void report_error(
 struct Invocation {
     std::filesystem::path input;
     std::filesystem::path output;
-    std::optional<std::filesystem::path> config;
 };
 
 [[nodiscard]] Invocation parse_invocation(
     const int argument_count,
     char* arguments[]
 ) {
-    if (arguments == nullptr || (argument_count != 3 && argument_count != 4)) {
-        throw tbank::cli::UsageError(
-            "expected INPUT.csv OUTPUT.csv and at most one CONFIG path"
-        );
+    if (arguments == nullptr || argument_count != 3) {
+        throw tbank::cli::UsageError("expected INPUT.csv and OUTPUT.csv");
     }
     if (arguments[0] == nullptr || arguments[1] == nullptr
-        || arguments[2] == nullptr
-        || (argument_count == 4 && arguments[3] == nullptr)) {
+        || arguments[2] == nullptr) {
         throw tbank::cli::UsageError("invalid process argument vector");
     }
 
@@ -122,16 +120,7 @@ struct Invocation {
     Invocation invocation{
         .input = std::filesystem::path(std::string(input)),
         .output = std::filesystem::path(std::string(output)),
-        .config = std::nullopt,
     };
-    if (argument_count == 4) {
-        const std::string_view config(arguments[3]);
-        if (config.empty()) {
-            throw tbank::cli::UsageError("config path must not be empty");
-        }
-        tbank::cli::require_valid_utf8("config path", config);
-        invocation.config = std::filesystem::path(std::string(config));
-    }
     return invocation;
 }
 
@@ -389,7 +378,7 @@ private:
             std::error_code ignored;
             static_cast<void>(std::filesystem::remove_all(path_, ignored));
         } catch (...) {
-            // Best effort only: cleanup must not replace the primary failure.
+            // Cleanup must not replace the primary failure.
         }
     }
 
@@ -464,10 +453,7 @@ private:
         output.parent_path()
     );
     const CountedGraphPreprocessResult prepared = [&] {
-        // Move every preprocessing-only owner into this phase boundary. The
-        // input descriptor and configurable input buffer are destroyed before
-        // PageRank admission/allocation, so the two planners compose by phase
-        // maximum rather than an accidental sum of live allocations.
+        // End preprocessing-only lifetimes before PageRank admission, so phase peaks combine by max.
         InputFile phase_input(std::move(input));
         std::vector<char> phase_buffer(std::move(buffer));
         CountedGraphPreprocessor preprocessor = CountedGraphPreprocessor::create(
@@ -496,8 +482,7 @@ private:
         outcome = analyze_outcome(analyzed);
     }
 
-    // The output uses independent no-replace publication. Never roll it back if
-    // cleanup fails after publication; report cleanup as a system failure.
+    // Independent output publication is never rolled back after cleanup failure.
     run_directory.cleanup_checked();
     return outcome;
 }
@@ -555,9 +540,10 @@ int main(const int argument_count, char* arguments[]) {
 
         const Invocation invocation = parse_invocation(argument_count, arguments);
         const std::uint64_t main_stack_bytes = observed_main_stack_bytes();
-        tbank::run::RunConfig config = invocation.config.has_value()
-            ? tbank::run::load_run_config(*invocation.config, main_stack_bytes)
-            : tbank::run::default_run_config(main_stack_bytes);
+        tbank::run::RunConfig config =
+            tbank::run::load_run_config_or_default(
+                std::filesystem::path(kDefaultConfigPath), main_stack_bytes
+            );
         tbank::run::validate_run_config(config);
         admit_observed_main_stack(config);
         return run_pipeline(invocation, std::move(config));

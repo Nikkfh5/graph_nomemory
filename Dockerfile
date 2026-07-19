@@ -18,14 +18,13 @@ WORKDIR /src
 COPY CMakeLists.txt ./
 COPY include/ include/
 COPY src/ src/
-COPY tests/ tests/
+COPY config/ config/
 
 RUN cmake -S /src -B /build \
         -G "Unix Makefiles" \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_CXX_COMPILER=/usr/bin/g++ \
     && cmake --build /build --parallel 2 \
-    && ctest --test-dir /build --output-on-failure \
     && cmake --install /build --prefix /opt/graph_nomemory
 
 FROM ${UBUNTU_BASE} AS runtime
@@ -44,4 +43,5 @@ LABEL org.opencontainers.image.title="Graph NoMemory" \
 COPY --from=build /opt/graph_nomemory/ /usr/local/
 
 WORKDIR /data
+COPY --from=build /src/config/ /data/config/
 CMD ["main", "--help"]

@@ -47,7 +47,10 @@ inline constexpr std::uint64_t kStaticCsvByteLimit = 11U;
 
 class ConfigFile final {
 public:
-    explicit ConfigFile(const std::filesystem::path& path) : path_(path) {
+    explicit ConfigFile(
+        const std::filesystem::path& path,
+        const bool allow_missing = false
+    ) : path_(path) {
         do {
             errno = 0;
             descriptor_ = ::open(
@@ -56,6 +59,9 @@ public:
             );
         } while (descriptor_ == -1 && errno == EINTR);
         if (descriptor_ == -1) {
+            if (allow_missing && errno == ENOENT) {
+                return;
+            }
             config_posix_error("cannot open", path_, errno);
         }
     }
@@ -67,6 +73,10 @@ public:
         if (descriptor_ != -1) {
             static_cast<void>(::close(descriptor_));
         }
+    }
+
+    [[nodiscard]] bool is_open() const noexcept {
+        return descriptor_ != -1;
     }
 
     [[nodiscard]] struct stat inspect() const {
@@ -460,6 +470,26 @@ RunConfig load_run_config(
     );
 }
 
+RunConfig load_run_config_or_default(
+    const std::filesystem::path& path,
+    const std::uint64_t observed_main_stack_bytes
+) {
+    const ConfigFile input(path, true);
+    if (!input.is_open()) {
+        return default_run_config(observed_main_stack_bytes);
+    }
+    const struct stat before = input.inspect();
+    const std::vector<char> bytes = input.read_exact(before);
+    const struct stat after = input.inspect();
+    if (!same_snapshot(before, after)) {
+        config_error("file changed while being read: " + path.string());
+    }
+    const std::string_view document = bytes.empty()
+        ? std::string_view{}
+        : std::string_view(bytes.data(), bytes.size());
+    return parse_run_config(document, observed_main_stack_bytes);
+}
+
 void validate_run_config(const RunConfig& config) {
     if (config.pagerank.resources.main_stack_bytes == 0U) {
         config_error("observed main stack must be positive");
@@ -479,10 +509,7 @@ void validate_run_config(const RunConfig& config) {
         pagerank::validate_page_rank_config(config.pagerank);
         resources::PageRankResourcePolicy configured_resources =
             config.pagerank.resources;
-        // main_stack_bytes is observed from the host rather than configured.
-        // Validate every config-controlled term with the smallest positive
-        // inventory here; the executable performs actual host admission as a
-        // resource check before creating any filesystem artifact.
+        // The stack is host-observed; use a minimal stand-in for configurable terms.
         configured_resources.main_stack_bytes = 1U;
         static_cast<void>(resources::page_rank_memory_plan(
             1U, configured_resources

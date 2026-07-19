@@ -49,7 +49,6 @@ void require_valid_utf8(
     std::string_view value
 );
 
-// A write failure is never allowed to masquerade as a successful command.
 void write_stdout(std::string_view payload);
 void write_stderr(std::string_view payload) noexcept;
 
