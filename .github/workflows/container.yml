@@ -1,8 +1,16 @@
-name: container
+name: контейнер
 
 on:
   push:
     branches: [main]
+    paths:
+      - .github/workflows/container.yml
+      - .dockerignore
+      - Dockerfile
+      - CMakeLists.txt
+      - app/**
+      - include/**
+      - src/**
   workflow_dispatch:
 
 permissions:
@@ -11,20 +19,21 @@ permissions:
 
 jobs:
   build-and-publish:
+    name: Сборка и публикация
     runs-on: ubuntu-22.04
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
+      - name: Получение исходного кода
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
 
-      - name: Login to GHCR
-        uses: docker/login-action@65b78e6e13532edd9afa3aa52ac7964289d1a9c1
+      - name: Вход в GHCR
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and publish
-        uses: docker/build-push-action@f2a1d5e99d037542a71f64918e516c093c6f3fc4
+      - name: Сборка и публикация
+        uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf
         with:
           context: .
           file: ./Dockerfile
