@@ -6,11 +6,11 @@
 
 Реализован standard uniform PageRank для невзвешенного ориентированного графа:
 
-\[
+$
 r_{k+1}(v)=\frac{1-\alpha}{V}+\alpha\left(
 \sum_{u\to v}\frac{r_k(u)}{d^+(u)}+\frac{D_k}{V}
 \right).
-\]
+$
 
 `d⁺(u)` — исходящая степень, `D_k` — суммарный rank dangling-вершин без исходящих рёбер. По умолчанию `alpha=0.85`; начальный вектор и teleportation равномерны.
 
@@ -27,9 +27,9 @@ PageRank выбран потому, что:
 
 Используется **semi-external destination pull**. Рёбра, входящие степени и каталог задач находятся на диске. В RAM остаётся состояние на вершину:
 
-\[
-8V\;(current)+8V\;(scratch)+4V\;(out\_degree)=20V\ \text{bytes}.
-\]
+$
+\underbrace{8V}_{\text{current}} + \underbrace{8V}_{\text{scratch}} + \underbrace{4V}_{\text{out-degree}} = 20V \quad \text{bytes}.
+$
 
 Preflight дополнительно учитывает I/O-буферы, стеки и guard pages потоков, scheduler window, служебные структуры и runtime reserve. Запуск разрешается только при соблюдении memory budget.
 
@@ -71,15 +71,15 @@ Workers считают bounded partial sums. Coordinator складывает и
 
 Потоковый parse требует `Theta(R)`. Binary-search remap требует `O(R log V)`. Chunk sorting и external merge дают worst-case `O(R log R)`. Безопасная общая верхняя оценка CPU:
 
-\[
+$
 O(R\log R+R\log V).
-\]
+$
 
 External record traffic:
 
-\[
+$
 O\left(R(1+\log_F N_v+\log_F N_e)+E+V\right).
-\]
+$
 
 В худшей оценке участвует `R`, а не `E`: дубликаты могут дать `R >> E`. При `R≈E` и малом числе runs фактических merge-levels и I/O меньше. Реализация всё равно сортирует bounded chunks, поэтому линейный best-case для всей подготовки не заявляется.
 
@@ -87,9 +87,9 @@ O\left(R(1+\log_F N_v+\log_F N_e)+E+V\right).
 
 Одна candidate iteration и один residual pass требуют `Theta(V+E+Q)` работы. Полный анализ:
 
-\[
+$
 \Theta((K+C)(V+E+Q)).
-\]
+$
 
 Один destination pass логически читает `4E + 4V + size(tasks)` bytes, кроме одноразовой validation и `O(V)` output.
 
@@ -105,16 +105,16 @@ Resident RAM определяется `V`, числом потоков и bounde
 
 PageRank operator является L1 contraction с коэффициентом `alpha`. В точной арифметике для кандидата `r`:
 
-\[
+$
 \lVert r-r^*\rVert_1\le
 \frac{\lVert F(r)-r\rVert_1}{1-\alpha}.
-\]
+$
 
 Изменение между итерациями используется только как prefilter. Публикация разрешается после отдельного прохода по всему графу и проверки:
 
-\[
-true\_residual+\epsilon_{verify}\le(1-\alpha)\eta,
-\]
+$
+\mathrm{residual}_{\mathrm{true}} + \epsilon_{\mathrm{verify}} \le (1-\alpha)\eta,
+$
 
 где по умолчанию `eta=1e-8`, `epsilon_verify=2^-30`. Некорректная масса, `NaN`, `Inf`, отрицательный rank или invalid residual дают явный numerical failure.
 
