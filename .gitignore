@@ -1,0 +1,12 @@
+/build/
+/build-*/
+/artifacts/
+/datasets/
+/workspace/
+/graph/
+/output/
+/tmp/
+/.venv/
+__pycache__/
+*.py[cod]
+*.tmp
