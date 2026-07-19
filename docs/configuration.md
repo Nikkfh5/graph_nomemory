@@ -3,7 +3,7 @@
 ## Публичный контракт
 
 ```text
-main INPUT.csv OUTPUT.csv [CONFIG]
+main INPUT.csv OUTPUT.csv
 ```
 
 - `INPUT.csv` — существующий regular file с ориентированными рёбрами;
@@ -11,21 +11,29 @@ main INPUT.csv OUTPUT.csv [CONFIG]
 - `OUTPUT.csv` — ещё не существующий path результата `vertex,rank` внутри
   существующего real directory. Файл публикуется atomically и не
   перезаписывается.
-- `CONFIG` — необязательный non-symlink regular file с explicit config v1.
-  Без него используются встроенные defaults ниже.
 - `main --help` печатает synopsis и ссылку на этот документ.
 
-Input/output paths не задаются через config. Программа не читает environment
-overrides и не ищет system, user или project config: effective configuration
-состоит из встроенных defaults и не более одного явно переданного файла.
+Путь config фиксирован: `./config/main.conf` относительно current working
+directory процесса. В CLI он не передаётся. Программа не читает environment
+overrides и не ищет system или user config.
+
+Если `./config/main.conf` отсутствует (`ENOENT`), используются встроенные
+defaults. Существующий, но unreadable, malformed, symlink в последнем
+компоненте или non-regular config является явной ошибкой: fallback в этом
+случае запрещён. В Docker рабочая директория — `/data`, а образ содержит
+`/data/config/main.conf`.
+
+Input/output paths через config не задаются.
 
 ## Формат config v1
 
-Config — dependency-free ASCII `key=value` document размером не более
-`65536` bytes:
+Tracked [`config/main.conf`](../config/main.conf) содержит все 35 изменяемых
+defaults и автоматически применяется при запуске из корня checkout. Чтобы
+переопределить параметр, измените его value в этом файле. Config —
+dependency-free ASCII `key=value` document размером не более `65536` bytes:
 
 ```text
-# explicit overrides
+# values may be edited
 schema=tbank-run-config-v1
 parallel.worker_count=1
 pagerank.max_iterations=300
