@@ -13,20 +13,20 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
 ```
 
-Сборка создаёт один публичный executable: `build/tbank`.
+Сборка создаёт один публичный executable: `build/main`.
 
 ## Запуск: CSV → CSV
 
 ```bash
 printf 'from,to\n1,2\n2,3\n3,1\n4,1\n' > edges.csv
-build/tbank edges.csv pagerank.csv
+build/main edges.csv pagerank.csv
 cat pagerank.csv
 ```
 
 Публичный интерфейс:
 
 ```text
-tbank INPUT.csv OUTPUT.csv [CONFIG]
+main INPUT.csv OUTPUT.csv [CONFIG]
 ```
 
 `INPUT.csv` — UTF-8 без BOM: точный заголовок `from,to`, затем одно ребро
@@ -37,13 +37,24 @@ tbank INPUT.csv OUTPUT.csv [CONFIG]
 `OUTPUT.csv` создаётся программой и содержит `vertex,rank`; существующий файл
 не перезаписывается. Необязательный `CONFIG` переопределяет встроенные defaults.
 
+У config нет фиксированного пути: программа ничего не ищет автоматически.
+Без третьего аргумента используются встроенные defaults. Чтобы изменить их,
+создайте config-файл в любом месте и передайте его путь явно:
+
+```bash
+build/main edges.csv pagerank.csv ./config.conf
+```
+
+Формат файла, все ключи и defaults перечислены в
+[`docs/configuration.md`](docs/configuration.md).
+
 ## Синтетический вход
 
 ```bash
 python3 tools/generators/generate.py \
   --profile reduced-skew \
   --output ./dataset
-build/tbank dataset/edges.csv pagerank.csv
+build/main dataset/edges.csv pagerank.csv
 ```
 
 Генератор создаёт `edges.csv` и воспроизводимый `manifest.json`. Профили и проверка результата описаны в [`tools/generators/README.md`](tools/generators/README.md).
