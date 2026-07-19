@@ -183,13 +183,22 @@ def _generator_implementation_matches_revision() -> bool:
     return diff.returncode == 0
 
 
-def resolve_revision(revision: str, allow_dirty: bool) -> RevisionState:
-    if REVISION_PATTERN.fullmatch(revision) is None:
+def resolve_revision(
+    requested_revision: str | None,
+    allow_dirty: bool,
+) -> RevisionState:
+    if (
+        requested_revision is not None
+        and REVISION_PATTERN.fullmatch(requested_revision) is None
+    ):
         raise GeneratorError("generator revision must be a lowercase 40-hex commit")
     head = _run_git(["rev-parse", "HEAD"]).strip()
-    if revision != head:
+    if REVISION_PATTERN.fullmatch(head) is None:
+        raise GeneratorError("current HEAD is not a lowercase 40-hex commit")
+    if requested_revision is not None and requested_revision != head:
         raise GeneratorError(
-            f"generator revision {revision} does not match current HEAD {head}"
+            f"generator revision {requested_revision} does not match "
+            f"current HEAD {head}"
         )
     tracked_status = _run_git(
         ["status", "--porcelain=v1", "--untracked-files=no"]
@@ -206,7 +215,7 @@ def resolve_revision(revision: str, allow_dirty: bool) -> RevisionState:
             "--allow-dirty for local tests"
         )
     return RevisionState(
-        revision=revision,
+        revision=head,
         tracked_tree_clean=tracked_tree_clean,
         implementation_matches_revision=implementation_matches_revision,
         dirty_allowed=allow_dirty,
@@ -1196,7 +1205,8 @@ def _parser() -> argparse.ArgumentParser:
     )
     mode.add_argument("--verify", type=Path, metavar="DIRECTORY")
     parser.add_argument("--profile", choices=sorted(PROFILES))
-    parser.add_argument("--generator-revision", required=True)
+    # Hidden compatibility option for frozen replays; normal runs derive HEAD.
+    parser.add_argument("--generator-revision", help=argparse.SUPPRESS)
     parser.add_argument(
         "--allow-dirty",
         action="store_true",
