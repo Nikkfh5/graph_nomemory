@@ -151,6 +151,29 @@ cmake --build build --parallel
 
 Каждая команда поддерживает `--help`.
 
+## Генератор синтетических графов
+
+Чтобы получить готовый входной CSV без ручного составления рёбер, запустите
+генератор из корня checkout:
+
+```bash
+python3 tools/generators/generate.py \
+  --profile reduced-skew \
+  --output ./dataset
+```
+
+Генератор создаёт новый каталог `dataset` с двумя файлами:
+
+- `edges.csv` — ориентированный граф в готовом для `tbank-prepare` формате;
+- `manifest.json` — профиль, число вершин и рёбер, SHA-256 и Git revision
+  генератора.
+
+Git revision определяется автоматически, передавать SHA в командной строке
+не нужно. Сейчас поддерживаются фиксированные воспроизводимые профили;
+произвольные количество вершин, количество рёбер и плотность не задаются.
+Полный список профилей, проверка результата и локальный режим описаны в
+[`tools/generators/README.md`](tools/generators/README.md).
+
 ## Быстрый сквозной пример
 
 Пример создаёт небольшой детерминированный граф из `101` вершины и `404`
@@ -158,13 +181,11 @@ cmake --build build --parallel
 запускает два вычислительных потока.
 
 ```bash
-revision="$(git rev-parse HEAD)"
 work_dir="$(mktemp -d -p "${TMPDIR:-/tmp}" graph-nomemory.XXXXXX)"
 
 python3 tools/generators/generate.py \
   --profile reduced-skew \
   --output "$work_dir/dataset" \
-  --generator-revision "$revision" \
   --chunk-bytes 127
 
 input_sha256="$(sha256sum "$work_dir/dataset/edges.csv" | cut -d ' ' -f 1)"
