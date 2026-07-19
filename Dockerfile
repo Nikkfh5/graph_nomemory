@@ -11,21 +11,21 @@ RUN apt-get update \
     && apt-get install --yes --no-install-recommends \
         cmake \
         g++ \
-        libssl-dev \
         make \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
 COPY CMakeLists.txt ./
-COPY app/ app/
 COPY include/ include/
 COPY src/ src/
+COPY tests/ tests/
 
 RUN cmake -S /src -B /build \
         -G "Unix Makefiles" \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_CXX_COMPILER=/usr/bin/g++ \
     && cmake --build /build --parallel 2 \
+    && ctest --test-dir /build --output-on-failure \
     && cmake --install /build --prefix /opt/graph_nomemory
 
 FROM ${UBUNTU_BASE} AS runtime
@@ -41,12 +41,7 @@ LABEL org.opencontainers.image.title="Graph NoMemory" \
       org.opencontainers.image.source="https://github.com/Nikkfh5/graph_nomemory" \
       org.opencontainers.image.revision="${VCS_REF}"
 
-RUN apt-get update \
-    && apt-get install --yes --no-install-recommends \
-        libssl3 \
-    && rm -rf /var/lib/apt/lists/*
-
 COPY --from=build /opt/graph_nomemory/ /usr/local/
 
 WORKDIR /data
-CMD ["tbank-analyze", "--help"]
+CMD ["tbank", "--help"]

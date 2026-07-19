@@ -1,12 +1,11 @@
-#include "cli_common.hpp"
+#include "tbank/run/cli.hpp"
 
 #include <algorithm>
 #include <charconv>
 #include <cmath>
-#include <iostream>
 #include <limits>
+#include <string>
 #include <system_error>
-#include <utility>
 
 #include <cerrno>
 #include <signal.h>
@@ -15,13 +14,6 @@
 namespace tbank::cli {
 namespace {
 
-[[nodiscard]] bool is_allowed(
-    const std::span<const std::string_view> allowed,
-    const std::string_view name
-) {
-    return std::find(allowed.begin(), allowed.end(), name) != allowed.end();
-}
-
 [[noreturn]] void option_error(
     const std::string_view option,
     const std::string_view detail
@@ -29,11 +21,6 @@ namespace {
     throw UsageError(
         "option --" + std::string(option) + ": " + std::string(detail)
     );
-}
-
-[[nodiscard]] char hexadecimal_digit(const unsigned int value) noexcept {
-    constexpr std::string_view digits = "0123456789abcdef";
-    return digits[value & 0x0fU];
 }
 
 [[nodiscard]] bool is_utf8_continuation(const unsigned char byte) noexcept {
@@ -170,86 +157,6 @@ void write_all(const int descriptor, const std::string_view payload) {
 
 }  // namespace
 
-ParsedOptions::ParsedOptions(std::map<std::string, std::string> values)
-    : values_(std::move(values)) {}
-
-ParsedOptions ParsedOptions::parse(
-    const int argument_count,
-    char* arguments[],
-    const std::span<const std::string_view> allowed_options
-) {
-    if (argument_count < 1 || arguments == nullptr) {
-        throw UsageError("invalid process argument vector");
-    }
-
-    std::map<std::string, std::string> values;
-    for (int index = 1; index < argument_count; ++index) {
-        const std::string_view token(arguments[index]);
-        if (!token.starts_with("--") || token.size() == 2U) {
-            throw UsageError(
-                "unexpected positional or malformed argument: "
-                + std::string(token)
-            );
-        }
-
-        const std::string_view body = token.substr(2U);
-        const std::size_t equals = body.find('=');
-        const std::string_view name = body.substr(0U, equals);
-        if (name.empty() || !is_allowed(allowed_options, name)) {
-            throw UsageError("unknown option: --" + std::string(name));
-        }
-
-        std::string_view value;
-        if (equals != std::string_view::npos) {
-            value = body.substr(equals + 1U);
-        } else {
-            if (index + 1 >= argument_count) {
-                option_error(name, "missing value");
-            }
-            const std::string_view candidate(arguments[index + 1]);
-            if (candidate.starts_with("--")) {
-                option_error(name, "missing value");
-            }
-            ++index;
-            value = candidate;
-        }
-        if (value.empty()) {
-            option_error(name, "empty value");
-        }
-
-        const auto [iterator, inserted] = values.emplace(
-            std::string(name), std::string(value)
-        );
-        static_cast<void>(iterator);
-        if (!inserted) {
-            option_error(name, "duplicate option");
-        }
-    }
-    return ParsedOptions(std::move(values));
-}
-
-bool ParsedOptions::contains(const std::string_view name) const {
-    return values_.contains(std::string(name));
-}
-
-std::string_view ParsedOptions::require(const std::string_view name) const {
-    const auto iterator = values_.find(std::string(name));
-    if (iterator == values_.end()) {
-        option_error(name, "required option is missing");
-    }
-    return iterator->second;
-}
-
-std::optional<std::string_view> ParsedOptions::optional(
-    const std::string_view name
-) const {
-    const auto iterator = values_.find(std::string(name));
-    if (iterator == values_.end()) {
-        return std::nullopt;
-    }
-    return iterator->second;
-}
-
 bool is_help_request(
     const int argument_count,
     char* arguments[]
@@ -356,130 +263,6 @@ void require_valid_utf8(
             option_error(option, "value is not valid UTF-8");
         }
         offset += sequence;
-    }
-}
-
-std::string json_quote(const std::string_view value) {
-    std::string result;
-    result.reserve(value.size() + 2U);
-    result.push_back('"');
-    for (std::size_t offset = 0U; offset < value.size();) {
-        const auto character = static_cast<unsigned char>(value[offset]);
-        switch (character) {
-            case '"':
-                result += "\\\"";
-                break;
-            case '\\':
-                result += "\\\\";
-                break;
-            case '\b':
-                result += "\\b";
-                break;
-            case '\f':
-                result += "\\f";
-                break;
-            case '\n':
-                result += "\\n";
-                break;
-            case '\r':
-                result += "\\r";
-                break;
-            case '\t':
-                result += "\\t";
-                break;
-            default:
-                if (character >= 0x20U && character <= 0x7eU) {
-                    result.push_back(static_cast<char>(character));
-                } else if (character >= 0x80U) {
-                    const std::size_t sequence = valid_utf8_sequence_length(
-                        value, offset
-                    );
-                    if (sequence != 0U) {
-                        result.append(value.substr(offset, sequence));
-                        offset += sequence;
-                        continue;
-                    }
-                    result += "\\u00";
-                    result.push_back(hexadecimal_digit(character >> 4U));
-                    result.push_back(hexadecimal_digit(character));
-                } else {
-                    result += "\\u00";
-                    result.push_back(hexadecimal_digit(character >> 4U));
-                    result.push_back(hexadecimal_digit(character));
-                }
-                break;
-        }
-        ++offset;
-    }
-    result.push_back('"');
-    return result;
-}
-
-std::string json_number(const double value) {
-    if (!std::isfinite(value)) {
-        return "null";
-    }
-    char buffer[64U]{};
-    const auto encoded = std::to_chars(
-        std::begin(buffer),
-        std::end(buffer),
-        value,
-        std::chars_format::general,
-        std::numeric_limits<double>::max_digits10
-    );
-    if (encoded.ec != std::errc{}) {
-        throw std::runtime_error("could not encode finite double as JSON");
-    }
-    return {buffer, encoded.ptr};
-}
-
-std::string json_hex_double(const double value) {
-    if (std::isnan(value)) {
-        return json_quote("nan");
-    }
-    if (std::isinf(value)) {
-        return json_quote(std::signbit(value) ? "-inf" : "inf");
-    }
-
-    char buffer[64U]{};
-    const auto encoded = std::to_chars(
-        buffer,
-        buffer + sizeof(buffer),
-        value,
-        std::chars_format::hex
-    );
-    if (encoded.ec != std::errc{}) {
-        throw std::runtime_error("could not encode double as hexadecimal");
-    }
-    const std::string_view token(
-        buffer, static_cast<std::size_t>(encoded.ptr - buffer)
-    );
-    std::string prefixed;
-    if (token.starts_with('-')) {
-        prefixed = "-0x" + std::string(token.substr(1U));
-    } else {
-        prefixed = "0x" + std::string(token);
-    }
-    return json_quote(prefixed);
-}
-
-void write_error_json(
-    const std::string_view command,
-    const std::string_view kind,
-    const std::string_view code,
-    const std::string_view message
-) noexcept {
-    try {
-        std::string payload =
-            "{\"schema\":\"TBANK_CLI_ERROR_V1\",\"command\":"
-            + json_quote(command)
-            + ",\"kind\":" + json_quote(kind)
-            + ",\"code\":" + json_quote(code)
-            + ",\"message\":" + json_quote(message) + "}\n";
-        write_all(STDERR_FILENO, payload);
-    } catch (...) {
-        // The requested error exit remains truthful even when the diagnostic
-        // channel itself is unavailable. There is no second recovery channel.
     }
 }
 

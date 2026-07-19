@@ -8,9 +8,9 @@ on:
       - .dockerignore
       - Dockerfile
       - CMakeLists.txt
-      - app/**
       - include/**
       - src/**
+      - tests/**
   workflow_dispatch:
 
 permissions:

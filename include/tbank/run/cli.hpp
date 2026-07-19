@@ -2,11 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <map>
-#include <optional>
-#include <span>
 #include <stdexcept>
-#include <string>
 #include <string_view>
 
 namespace tbank::cli {
@@ -25,26 +21,6 @@ inline constexpr int kExitInternal = 10;
 class UsageError final : public std::runtime_error {
 public:
     using std::runtime_error::runtime_error;
-};
-
-class ParsedOptions final {
-public:
-    [[nodiscard]] static ParsedOptions parse(
-        int argument_count,
-        char* arguments[],
-        std::span<const std::string_view> allowed_options
-    );
-
-    [[nodiscard]] bool contains(std::string_view name) const;
-    [[nodiscard]] std::string_view require(std::string_view name) const;
-    [[nodiscard]] std::optional<std::string_view> optional(
-        std::string_view name
-    ) const;
-
-private:
-    explicit ParsedOptions(std::map<std::string, std::string> values);
-
-    std::map<std::string, std::string> values_;
 };
 
 [[nodiscard]] bool is_help_request(int argument_count, char* arguments[]);
@@ -73,19 +49,7 @@ void require_valid_utf8(
     std::string_view value
 );
 
-[[nodiscard]] std::string json_quote(std::string_view value);
-[[nodiscard]] std::string json_number(double value);
-[[nodiscard]] std::string json_hex_double(double value);
-
-void write_error_json(
-    std::string_view command,
-    std::string_view kind,
-    std::string_view code,
-    std::string_view message
-) noexcept;
-
-// stdout carries the single machine-readable success/outcome record. A write
-// failure is never allowed to masquerade as a successful command.
+// A write failure is never allowed to masquerade as a successful command.
 void write_stdout(std::string_view payload);
 void write_stderr(std::string_view payload) noexcept;
 

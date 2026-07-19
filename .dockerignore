@@ -10,7 +10,6 @@ output
 tmp
 .venv
 docs
-tests
 scripts
 tools
 README.md

@@ -41,7 +41,6 @@ target_compile_options(
 )
 
 find_package(Threads REQUIRED)
-find_package(OpenSSL 3.0 REQUIRED COMPONENTS Crypto)
 
 add_library(
     tbank_parallel
@@ -201,78 +200,72 @@ target_link_libraries(
 add_library(
     tbank_cli_support
     STATIC
-    app/cli_common.cpp
+    src/run/cli.cpp
 )
 target_compile_features(tbank_cli_support PUBLIC cxx_std_20)
-target_link_libraries(tbank_cli_support PRIVATE tbank_warnings)
+target_include_directories(
+    tbank_cli_support
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(
+    tbank_cli_support
+    PRIVATE
+        tbank_warnings
+)
 
 add_library(
-    tbank_checksum
+    tbank_run_config
     STATIC
-    app/sha256.cpp
+    src/run/config.cpp
 )
-target_compile_features(tbank_checksum PUBLIC cxx_std_20)
+target_compile_features(tbank_run_config PUBLIC cxx_std_20)
+target_include_directories(
+    tbank_run_config
+    PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
 target_link_libraries(
-    tbank_checksum
-    PRIVATE
-        OpenSSL::Crypto
-        tbank_warnings
-)
-
-add_executable(
-    tbank_prepare_cli
-    app/prepare.cpp
-)
-set_target_properties(tbank_prepare_cli PROPERTIES OUTPUT_NAME tbank-prepare)
-target_compile_features(tbank_prepare_cli PRIVATE cxx_std_20)
-target_link_libraries(
-    tbank_prepare_cli
-    PRIVATE
-        tbank_cli_support
-        tbank_checksum
-        tbank_platform
-        tbank_preprocess
-        tbank_warnings
-)
-
-add_executable(
-    tbank_analyze_cli
-    app/analyze.cpp
-)
-set_target_properties(tbank_analyze_cli PROPERTIES OUTPUT_NAME tbank-analyze)
-target_compile_features(tbank_analyze_cli PRIVATE cxx_std_20)
-target_link_libraries(
-    tbank_analyze_cli
+    tbank_run_config
     PRIVATE
         tbank_cli_support
         tbank_pagerank
+        tbank_preprocess
         tbank_resources
         tbank_warnings
 )
 
 add_executable(
-    tbank_inspect_tasks_cli
-    app/inspect_tasks.cpp
+    tbank
+    src/main.cpp
 )
-set_target_properties(
-    tbank_inspect_tasks_cli
-    PROPERTIES OUTPUT_NAME tbank-inspect-tasks
-)
-target_compile_features(tbank_inspect_tasks_cli PRIVATE cxx_std_20)
+target_compile_features(tbank PRIVATE cxx_std_20)
 target_link_libraries(
-    tbank_inspect_tasks_cli
+    tbank
     PRIVATE
         tbank_cli_support
-        tbank_storage
+        tbank_pagerank
+        tbank_platform
+        tbank_preprocess
+        tbank_resources
+        tbank_run_config
         tbank_warnings
 )
 
+include(CTest)
+if(BUILD_TESTING)
+    add_test(
+        NAME tbank_contract_smoke
+        COMMAND
+            /bin/sh
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/contract_smoke.sh
+            $<TARGET_FILE:tbank>
+    )
+endif()
 
 include(GNUInstallDirs)
 install(
     TARGETS
-        tbank_prepare_cli
-        tbank_analyze_cli
-        tbank_inspect_tasks_cli
+        tbank
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
